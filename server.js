@@ -2,9 +2,9 @@ require('dotenv').config();
 const express    = require('express');
 const fs         = require('fs');
 const path       = require('path');
-const ExcelJS    = require('exceljs');
 const nodemailer = require('nodemailer');
 const LEAD_TYPES = require('./lead-types');
+const { createSheet } = require('./google');
 
 const app  = express();
 const PORT = process.env.PORT || 3005;
@@ -44,20 +44,6 @@ function findLeadType(tipo) {
   return key ? { name: key, headers: LEAD_TYPES[key] } : null;
 }
 
-// ── Spreadsheet ───────────────────────────────────────────
-
-async function buildWorkbook(headers, sheetName) {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet(sheetName.replace(/[\\/?*[\]:]/g, '').slice(0, 31)); // Excel sheet-name rules
-  if (!headers.length) return wb.xlsx.writeBuffer();
-  ws.columns = headers.map(h => ({ header: h, width: Math.max(14, h.length + 4) }));
-  const headerRow = ws.getRow(1);
-  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
-  ws.views = [{ state: 'frozen', ySplit: 1 }];
-  return wb.xlsx.writeBuffer();
-}
-
 // ── Email ─────────────────────────────────────────────────
 
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465');
@@ -75,18 +61,19 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-async function sendSheet({ agentName, email }, leadType, filename, buffer) {
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function sendSheetLink({ agentName, email }, leadType, url) {
   const greeting = agentName ? `Hi ${agentName},` : 'Hi,';
   await transporter.sendMail({
     from: `"${process.env.FROM_NAME || 'LEADS TFC'}" <${process.env.SMTP_USER}>`,
     to: email,
     subject: `Your ${leadType} spreadsheet`,
-    html: `<p>${greeting}</p><p>Attached is your <b>${leadType}</b> spreadsheet.</p>`,
-    attachments: [{
-      filename,
-      content: buffer,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    }],
+    text: `${greeting}\n\nHere is your ${leadType} spreadsheet:\n${url}\n`,
+    html: `<p>${escapeHtml(greeting)}</p>
+      <p>Here is your <b>${escapeHtml(leadType)}</b> spreadsheet:</p>
+      <p><a href="${url}" style="display:inline-block;padding:10px 18px;background:#000;color:#fff;text-decoration:none;border-radius:6px">Open spreadsheet</a></p>
+      <p style="color:#666;font-size:13px">Or copy this link: <a href="${url}">${url}</a></p>`,
   });
 }
 
@@ -127,21 +114,23 @@ app.post('/webhook', async (req, res) => {
     });
   }
 
-  const date     = new Date().toISOString().slice(0, 10);
-  const filename = `${leadType.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${date}.xlsx`;
+  const date  = new Date().toISOString().slice(0, 10);
+  const title = [leadType.name, fields.agentName, date].filter(Boolean).join(' - ');
 
-  console.log(`Sending ${leadType.name} sheet to ${fields.email}...`);
+  if (DRY_RUN) {
+    console.log(`Dry run: would create "${title}" and email it to ${fields.email}`);
+    logSend({ ...fields, leadType: leadType.name, status: 'dry-run' });
+    return res.json({ success: true, leadType: leadType.name, sentTo: fields.email, dryRun: true });
+  }
+
+  console.log(`Creating "${title}" for ${fields.email}...`);
   try {
-    const buffer = await buildWorkbook(leadType.headers, leadType.name);
-    if (DRY_RUN) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(path.join(DATA_DIR, filename), buffer);
-    } else {
-      await sendSheet(fields, leadType.name, filename, buffer);
-    }
-    console.log(DRY_RUN ? `Dry run: saved ${filename}` : `Sent ${leadType.name} sheet to ${fields.email}`);
-    logSend({ ...fields, leadType: leadType.name, status: DRY_RUN ? 'dry-run' : 'sent' });
-    res.json({ success: true, leadType: leadType.name, sentTo: fields.email, dryRun: DRY_RUN });
+    const { url, sharing } = await createSheet(title, leadType.headers, fields.email);
+    console.log(`Created ${url} (shared: ${sharing})`);
+    await sendSheetLink(fields, leadType.name, url);
+    console.log(`Sent ${leadType.name} sheet link to ${fields.email}`);
+    logSend({ ...fields, leadType: leadType.name, status: 'sent', url, sharing });
+    res.json({ success: true, leadType: leadType.name, sentTo: fields.email, sheetUrl: url, sharing });
   } catch (err) {
     console.error('Send failed:', err.message);
     logSend({ ...fields, leadType: leadType.name, status: 'failed', error: err.message });
@@ -153,7 +142,9 @@ app.get('/', (req, res) => res.json({ ok: true, service: 'sheet-sender', leadTyp
 
 app.listen(PORT, () => {
   console.log(`Sheet Sender: http://localhost:${PORT}  (webhook: POST /webhook)`);
-  if (DRY_RUN) console.log('DRY_RUN is on: spreadsheets are saved to data/ instead of emailed');
-  else if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS)
+  if (DRY_RUN) console.log('DRY_RUN is on: no sheets are created and no emails are sent');
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS)
     console.warn('WARNING: SMTP_HOST / SMTP_USER / SMTP_PASS not set; emails will fail. Copy .env.example to .env.');
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN)
+    console.warn('WARNING: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN not set; sheets cannot be created. See README.');
 });

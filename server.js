@@ -60,18 +60,21 @@ async function buildWorkbook(headers, sheetName) {
 
 // ── Email ─────────────────────────────────────────────────
 
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465');
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host:   process.env.SMTP_HOST,
+  port:   SMTP_PORT,
+  secure: SMTP_PORT === 465, // 465 = SSL; 587 = STARTTLS
   auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   },
 });
 
 async function sendSheet({ agentName, email }, leadType, filename, buffer) {
   const greeting = agentName ? `Hi ${agentName},` : 'Hi,';
   await transporter.sendMail({
-    from: `"${process.env.FROM_NAME || 'LEADS TFC'}" <${process.env.GMAIL_USER}>`,
+    from: `"${process.env.FROM_NAME || 'LEADS TFC'}" <${process.env.SMTP_USER}>`,
     to: email,
     subject: `Your ${leadType} spreadsheet`,
     html: `<p>${greeting}</p><p>Attached is your <b>${leadType}</b> spreadsheet.</p>`,
@@ -135,6 +138,6 @@ app.get('/', (req, res) => res.json({ ok: true, service: 'sheet-sender', leadTyp
 app.listen(PORT, () => {
   console.log(`Sheet Sender: http://localhost:${PORT}  (webhook: POST /webhook)`);
   if (DRY_RUN) console.log('DRY_RUN is on: spreadsheets are saved to data/ instead of emailed');
-  else if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD)
-    console.warn('WARNING: GMAIL_USER / GMAIL_APP_PASSWORD not set; emails will fail. Copy .env.example to .env.');
+  else if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS)
+    console.warn('WARNING: SMTP_HOST / SMTP_USER / SMTP_PASS not set; emails will fail. Copy .env.example to .env.');
 });

@@ -5,7 +5,7 @@ Webhook that receives an agent's info plus a "tipo de lead", builds an `.xlsx` s
 ## Setup
 
 1. `cd sheet-sender && npm install`
-2. Copy `.env.example` to `.env` and fill in `GMAIL_USER` and `GMAIL_APP_PASSWORD` (same as lead-distributor)
+2. Copy `.env.example` to `.env` and fill in the `SMTP_*` settings for the sending email account (GoDaddy settings are in the comments)
 3. `npm start` (runs on port 3005)
 
 ## Webhook

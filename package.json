@@ -1,0 +1,15 @@
+{
+  "name": "sheet-sender",
+  "version": "1.0.0",
+  "description": "Webhook that builds a spreadsheet with headers based on the lead type and emails it to the agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "nodemailer": "^7.0.0"
+  }
+}

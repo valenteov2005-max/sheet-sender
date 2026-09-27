@@ -65,6 +65,10 @@ const transporter = nodemailer.createTransport({
   host:   process.env.SMTP_HOST,
   port:   SMTP_PORT,
   secure: SMTP_PORT === 465, // 465 = SSL; 587 = STARTTLS
+  // Fail fast so the webhook answers well inside the caller's 60s limit
+  connectionTimeout: 10000,
+  greetingTimeout:   10000,
+  socketTimeout:     20000,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,

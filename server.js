@@ -102,14 +102,24 @@ function logSend(entry) {
 // ── Routes ────────────────────────────────────────────────
 
 app.post('/webhook', async (req, res) => {
+  console.log('Webhook received:', JSON.stringify(req.body));
   const fields = readFields(req.body);
-  if (!fields.email)    return res.status(400).json({ error: 'email is required' });
-  if (!fields.tipoLead) return res.status(400).json({ error: 'tipo de lead is required' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email))
+  if (!fields.email) {
+    console.log('Rejected: email is required');
+    return res.status(400).json({ error: 'email is required' });
+  }
+  if (!fields.tipoLead) {
+    console.log('Rejected: tipo de lead is required');
+    return res.status(400).json({ error: 'tipo de lead is required' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) {
+    console.log(`Rejected: invalid email "${fields.email}"`);
     return res.status(400).json({ error: `Invalid email: ${fields.email}` });
+  }
 
   const leadType = findLeadType(fields.tipoLead);
   if (!leadType) {
+    console.log(`Rejected: unknown tipo de lead "${fields.tipoLead}"`);
     logSend({ ...fields, status: 'rejected', error: 'unknown tipo de lead' });
     return res.status(400).json({
       error: `Unknown tipo de lead: "${fields.tipoLead}"`,
@@ -120,6 +130,7 @@ app.post('/webhook', async (req, res) => {
   const date     = new Date().toISOString().slice(0, 10);
   const filename = `${leadType.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${date}.xlsx`;
 
+  console.log(`Sending ${leadType.name} sheet to ${fields.email}...`);
   try {
     const buffer = await buildWorkbook(leadType.headers, leadType.name);
     if (DRY_RUN) {
@@ -128,6 +139,7 @@ app.post('/webhook', async (req, res) => {
     } else {
       await sendSheet(fields, leadType.name, filename, buffer);
     }
+    console.log(DRY_RUN ? `Dry run: saved ${filename}` : `Sent ${leadType.name} sheet to ${fields.email}`);
     logSend({ ...fields, leadType: leadType.name, status: DRY_RUN ? 'dry-run' : 'sent' });
     res.json({ success: true, leadType: leadType.name, sentTo: fields.email, dryRun: DRY_RUN });
   } catch (err) {
